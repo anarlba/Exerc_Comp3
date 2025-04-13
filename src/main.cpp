@@ -25,7 +25,6 @@ public:
     }
 
     void display_board() {
-        std::unique_lock<std::mutex> lock(board_mutex);
         std::cout << "\nTabuleiro:\n";
         for (const auto& row : board) {
             for (const auto& cell : row) {
@@ -38,15 +37,8 @@ public:
 
     bool make_move(char player, int row, int col) {
         std::unique_lock<std::mutex> lock(board_mutex);
-        
-        // Espera até que seja a vez do jogador ou o jogo termine
-        turn_cv.wait(lock, [this, player] {
-            return current_player == player || game_over;
-        });
 
-        if (game_over) return false;
-        if (player != current_player) return false;
-        if (row < 0 || row > 2 || col < 0 || col > 2 || board[row][col] != ' ') {
+        if (game_over || current_player != player || row < 0 || row > 2 || col < 0 || col > 2 || board[row][col] != ' ') {
             return false;
         }
 
@@ -67,26 +59,9 @@ public:
         return true;
     }
 
-    bool check_win(char player) {
-        // Verifica linhas e colunas
-        for (int i = 0; i < 3; ++i) {
-            if (board[i][0] == player && board[i][1] == player && board[i][2] == player) return true;
-            if (board[0][i] == player && board[1][i] == player && board[2][i] == player) return true;
-        }
-        // Verifica diagonais
-        if (board[0][0] == player && board[1][1] == player && board[2][2] == player) return true;
-        if (board[0][2] == player && board[1][1] == player && board[2][0] == player) return true;
-        
-        return false;
-    }
-
-    bool check_draw() {
-        for (const auto& row : board) {
-            for (const auto& cell : row) {
-                if (cell == ' ') return false;
-            }
-        }
-        return true;
+    bool is_my_turn(char player) {
+        std::unique_lock<std::mutex> lock(board_mutex);
+        return !game_over && current_player == player;
     }
 
     bool is_game_over() {
@@ -98,51 +73,75 @@ public:
         std::unique_lock<std::mutex> lock(board_mutex);
         return winner;
     }
+
+private:
+    bool check_win(char player) {
+        for (int i = 0; i < 3; ++i) {
+            if ((board[i][0] == player && board[i][1] == player && board[i][2] == player) ||
+                (board[0][i] == player && board[1][i] == player && board[2][i] == player)) {
+                return true;
+            }
+        }
+        return (board[0][0] == player && board[1][1] == player && board[2][2] == player) ||
+               (board[0][2] == player && board[1][1] == player && board[2][0] == player);
+    }
+
+    bool check_draw() {
+        for (const auto& row : board) {
+            for (const auto& cell : row) {
+                if (cell == ' ') {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 };
 
 class Player {
-private:
-    TicTacToe& game;
-    char symbol;
-    std::string strategy;
-
-public:
-    Player(TicTacToe& g, char s, std::string strat) 
-        : game(g), symbol(s), strategy(strat) {}
-
-    void play() {
-        while (!game.is_game_over()) {
-            if (strategy == "sequential") {
-                play_sequential();
-            } else if (strategy == "random") {
-                play_random();
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
-
-private:
-    void play_sequential() {
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) {
-                if (game.make_move(symbol, row, col)) {
-                    return;
+    private:
+        TicTacToe& game;
+        char symbol;
+        std::string strategy;
+    
+    public:
+        Player(TicTacToe& g, char s, std::string strat)
+            : game(g), symbol(s), strategy(strat) {}
+    
+        void play() {
+            while (!game.is_game_over()) {
+                if (game.is_my_turn(symbol)) {
+                    if (strategy == "sequential") {
+                        play_sequential();
+                    } else if (strategy == "random") {
+                        play_random();
+                    }
+                    // Delay de 500ms após a jogada
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                } else {
+                    // Espera um pouco antes de tentar de novo
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
-                if (game.is_game_over()) return;
             }
         }
-    }
-
-    void play_random() {
-        while (!game.is_game_over()) {
-            int row = rand() % 3;
-            int col = rand() % 3;
-            if (game.make_move(symbol, row, col)) {
-                return;
+    
+    private:
+        void play_sequential() {
+            for (int row = 0; row < 3; row++) {
+                for (int col = 0; col < 3; col++) {
+                    if (game.make_move(symbol, row, col)) return;
+                }
             }
         }
-    }
-};
+    
+        void play_random() {
+            while (!game.is_game_over()) {
+                int row = rand() % 3;
+                int col = rand() % 3;
+                if (game.make_move(symbol, row, col)) return;
+            }
+        }
+    };
 
 int main() {
     srand(static_cast<unsigned>(time(nullptr)));
